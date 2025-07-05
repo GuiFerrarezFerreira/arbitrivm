@@ -25,6 +25,7 @@ CREATE TABLE usuarios (
     nome_completo VARCHAR(255) NOT NULL,
     cpf_cnpj VARCHAR(20) UNIQUE,
     telefone VARCHAR(20),
+    empresa_id INT DEFAULT NULL,
     ativo BOOLEAN DEFAULT TRUE,
     email_verificado BOOLEAN DEFAULT FALSE,
     token_verificacao VARCHAR(255),
@@ -33,6 +34,7 @@ CREATE TABLE usuarios (
     ultimo_acesso TIMESTAMP NULL,
     dois_fatores_ativo BOOLEAN DEFAULT FALSE,
     secret_2fa VARCHAR(255),
+    notificacoes_email BOOLEAN DEFAULT TRUE,
     FOREIGN KEY (tipo_usuario_id) REFERENCES tipos_usuario(id)
 );
 
@@ -80,6 +82,7 @@ CREATE TABLE arbitros (
     pos_imobiliario BOOLEAN DEFAULT FALSE,
     perfil_premium BOOLEAN DEFAULT FALSE,
     taxa_sucesso DECIMAL(5,2) DEFAULT 0,
+    taxa_hora DECIMAL(10,2) DEFAULT 0,
     total_casos INT DEFAULT 0,
     foto_perfil VARCHAR(500),
     certificados TEXT,
@@ -100,16 +103,18 @@ CREATE TABLE arbitro_especializacoes (
 CREATE TABLE tipos_disputa (
     id INT PRIMARY KEY AUTO_INCREMENT,
     nome VARCHAR(100) NOT NULL,
+    slug VARCHAR(100) NOT NULL UNIQUE,
     categoria ENUM('danos', 'infracao_condominial', 'locacao', 'outros') NOT NULL,
     descricao TEXT,
-    campos_obrigatorios JSON
+    campos_obrigatorios JSON,
+    ativo BOOLEAN DEFAULT TRUE
 );
 
-INSERT INTO tipos_disputa (nome, categoria, descricao) VALUES
-('Danos ao Imóvel', 'danos', 'Disputas relacionadas a danos causados ao imóvel'),
-('Infração Condominial', 'infracao_condominial', 'Violações ao regimento interno do condomínio'),
-('Inadimplência de Aluguel', 'locacao', 'Falta de pagamento de aluguel'),
-('Descumprimento Contratual', 'locacao', 'Violação de cláusulas contratuais de locação');
+INSERT INTO tipos_disputa (nome, slug, categoria, descricao, ativo) VALUES
+('Danos ao Imóvel', 'danos-imovel', 'danos', 'Disputas relacionadas a danos causados ao imóvel', TRUE),
+('Infração Condominial', 'infracao-condominial', 'infracao_condominial', 'Violações ao regimento interno do condomínio', TRUE),
+('Inadimplência de Aluguel', 'inadimplencia-aluguel', 'locacao', 'Falta de pagamento de aluguel', TRUE),
+('Descumprimento Contratual', 'descumprimento-contratual', 'locacao', 'Violação de cláusulas contratuais de locação', TRUE);
 
 -- Tabela de disputas
 CREATE TABLE disputas (
@@ -122,7 +127,9 @@ CREATE TABLE disputas (
     arbitro_id INT,
     status ENUM('triagem', 'aguardando_aceite', 'em_andamento', 'aguardando_sentenca', 'finalizada', 'cancelada') DEFAULT 'triagem',
     valor_causa DECIMAL(12,2),
+    descricao TEXT,
     endereco_imovel VARCHAR(255),
+    numero_unidade VARCHAR(50),
     numero_contrato VARCHAR(50),
     valor_aluguel DECIMAL(10,2),
     data_vencimento DATE,
@@ -130,10 +137,11 @@ CREATE TABLE disputas (
     unidade_condominial VARCHAR(50),
     descricao_conflito TEXT,
     data_abertura TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    data_inicio TIMESTAMP NULL,
     data_aceite TIMESTAMP NULL,
     data_finalizacao TIMESTAMP NULL,
     prazo_defesa DATE,
-    sentenca_id INT,
+    sentenca_arquivo VARCHAR(500),
     acordo_realizado BOOLEAN DEFAULT FALSE,
     FOREIGN KEY (tipo_disputa_id) REFERENCES tipos_disputa(id),
     FOREIGN KEY (empresa_id) REFERENCES empresas(id),
@@ -142,48 +150,55 @@ CREATE TABLE disputas (
     FOREIGN KEY (arbitro_id) REFERENCES arbitros(id)
 );
 
--- Tabela de documentos
-CREATE TABLE documentos (
+-- Tabela de informações de infração condominial
+CREATE TABLE disputa_infracoes (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    disputa_id INT NOT NULL UNIQUE,
+    tipo_infracao VARCHAR(100),
+    data_infracao DATE,
+    testemunhas TEXT,
+    medidas_tomadas TEXT,
+    FOREIGN KEY (disputa_id) REFERENCES disputas(id) ON DELETE CASCADE
+);
+
+-- Tabela de documentos das disputas
+CREATE TABLE disputa_documentos (
     id INT PRIMARY KEY AUTO_INCREMENT,
     disputa_id INT NOT NULL,
-    usuario_upload_id INT NOT NULL,
-    tipo_documento ENUM('contrato_locacao', 'laudo_vistoria', 'foto_dano', 'video_dano', 'ata_condominio', 'regimento_interno', 'notificacao', 'outros') NOT NULL,
+    usuario_id INT NOT NULL,
+    tipo_documento ENUM('contrato', 'laudo', 'foto_video', 'ata', 'notificacao', 'comprovante', 'outros') NOT NULL,
     nome_arquivo VARCHAR(255) NOT NULL,
-    caminho_arquivo VARCHAR(500) NOT NULL,
-    tamanho_bytes BIGINT,
+    nome_original VARCHAR(255) NOT NULL,
+    tamanho BIGINT,
     mime_type VARCHAR(100),
-    hash_arquivo VARCHAR(64),
-    versao INT DEFAULT 1,
+    descricao TEXT,
     data_upload TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (disputa_id) REFERENCES disputas(id) ON DELETE CASCADE,
-    FOREIGN KEY (usuario_upload_id) REFERENCES usuarios(id)
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
 );
 
--- Tabela de comunicações
-CREATE TABLE comunicacoes (
+-- Tabela de mensagens/comunicações
+CREATE TABLE disputa_mensagens (
     id INT PRIMARY KEY AUTO_INCREMENT,
     disputa_id INT NOT NULL,
-    remetente_id INT NOT NULL,
-    tipo_comunicacao ENUM('mensagem', 'notificacao', 'intimacao') DEFAULT 'mensagem',
+    usuario_id INT NOT NULL,
     mensagem TEXT NOT NULL,
-    anexos JSON,
     lida BOOLEAN DEFAULT FALSE,
-    data_leitura TIMESTAMP NULL,
     data_envio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (disputa_id) REFERENCES disputas(id) ON DELETE CASCADE,
-    FOREIGN KEY (remetente_id) REFERENCES usuarios(id)
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
 );
 
--- Tabela de destinatários das comunicações
-CREATE TABLE comunicacao_destinatarios (
+-- Tabela de histórico das disputas
+CREATE TABLE disputa_historico (
     id INT PRIMARY KEY AUTO_INCREMENT,
-    comunicacao_id INT NOT NULL,
-    destinatario_id INT NOT NULL,
-    lida BOOLEAN DEFAULT FALSE,
-    data_leitura TIMESTAMP NULL,
-    FOREIGN KEY (comunicacao_id) REFERENCES comunicacoes(id) ON DELETE CASCADE,
-    FOREIGN KEY (destinatario_id) REFERENCES usuarios(id),
-    UNIQUE KEY unique_com_dest (comunicacao_id, destinatario_id)
+    disputa_id INT NOT NULL,
+    usuario_id INT NOT NULL,
+    evento VARCHAR(100) NOT NULL,
+    descricao TEXT,
+    data_evento TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (disputa_id) REFERENCES disputas(id) ON DELETE CASCADE,
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
 );
 
 -- Tabela de sentenças
@@ -196,6 +211,7 @@ CREATE TABLE sentencas (
     dispositivo TEXT NOT NULL,
     valor_condenacao DECIMAL(12,2),
     prazo_cumprimento INT,
+    arquivo_pdf VARCHAR(500),
     data_sentenca TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (disputa_id) REFERENCES disputas(id),
     FOREIGN KEY (arbitro_id) REFERENCES arbitros(id)
@@ -252,7 +268,7 @@ CREATE TABLE relatorios_b2b (
 CREATE TABLE notificacoes (
     id INT PRIMARY KEY AUTO_INCREMENT,
     usuario_id INT NOT NULL,
-    tipo ENUM('nova_disputa', 'nova_mensagem', 'prazo_proximo', 'sentenca_disponivel', 'documento_adicionado') NOT NULL,
+    tipo ENUM('disputa_criada', 'nova_disputa', 'disputa_aceita', 'disputa_finalizada', 'nova_mensagem', 'novo_documento', 'sentenca_proferida', 'prazo_proximo', 'nova_disputa_triagem', 'sistema') NOT NULL,
     titulo VARCHAR(255) NOT NULL,
     mensagem TEXT,
     link VARCHAR(500),
@@ -267,12 +283,14 @@ CREATE INDEX idx_disputas_status ON disputas(status);
 CREATE INDEX idx_disputas_empresa ON disputas(empresa_id);
 CREATE INDEX idx_disputas_datas ON disputas(data_abertura, data_finalizacao);
 CREATE INDEX idx_usuarios_email ON usuarios(email);
-CREATE INDEX idx_comunicacoes_disputa ON comunicacoes(disputa_id);
-CREATE INDEX idx_documentos_disputa ON documentos(disputa_id);
+CREATE INDEX idx_comunicacoes_disputa ON disputa_mensagens(disputa_id);
+CREATE INDEX idx_documentos_disputa ON disputa_documentos(disputa_id);
 CREATE INDEX idx_logs_usuario ON logs_auditoria(usuario_id);
 CREATE INDEX idx_logs_disputa ON logs_auditoria(disputa_id);
 CREATE INDEX idx_notificacoes_usuario ON notificacoes(usuario_id, lida);
+CREATE INDEX idx_usuarios_empresa ON usuarios(empresa_id);
+CREATE INDEX idx_tipos_disputa_ativo ON tipos_disputa(ativo);
 
--- Criar usuário admin padrão (senha: Admin@123 - deve ser alterada no primeiro acesso)
+-- Criar usuário admin padrão (senha: Admin@123)
 INSERT INTO usuarios (tipo_usuario_id, email, senha, nome_completo, cpf_cnpj, email_verificado) 
-VALUES (1, 'admin@arbitrivm.com.br', '$2y$10$8JGX2DQX0YKPQm8fYYKYLO6X5X5X5X5X5X5X5X5X5X5X5X5X5X', 'Administrador Sistema', '00000000000', TRUE);
+VALUES (1, 'admin@arbitrivm.com.br', '$2y$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Administrador Sistema', '00000000000', TRUE);
