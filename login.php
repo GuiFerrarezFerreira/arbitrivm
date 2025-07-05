@@ -46,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = "Email ou senha incorretos.";
             } else if (!$usuario['email_verificado']) {
                 $error = "Por favor, verifique seu email antes de fazer login.";
-            } else if ($senha == $usuario['senha']) {
+            } else if ($senha != $usuario['senha']) {
                 $error = "Email ou senha incorretos.";
                 
                 // Log tentativa falha
